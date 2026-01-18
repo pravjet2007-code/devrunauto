@@ -1,2 +1,8 @@
 .env
 droidrun_exp
+venv/
+__pycache__/
+*.pyc
+screenshots/
+logs/
+neuro_state_*.png

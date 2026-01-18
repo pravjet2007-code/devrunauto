@@ -4,106 +4,138 @@ import argparse
 import asyncio
 import re
 import sys
-import io
 from dotenv import load_dotenv
 
-# Ensure we can import neurorun
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
+# --- DroidRun Professional Architecture Imports ---
 try:
-    from neurorun.orchestrator import NeuroOrchestrator
+    from droidrun.agent.droid import DroidAgent
+    from droidrun.config_manager import DroidrunConfig
 except ImportError:
-    print("Error: Could not import NeuroOrchestrator. Ensure neurorun/orchestrator.py exists.")
+    print("CRITICAL ERROR: 'droidrun' library not found or incompatible version.")
+    print("Please ensure you have installed it: pip install droidrun")
     sys.exit(1)
 
-# Force UTF-8
-if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-
+# Load environment variables
 load_dotenv()
-# Ensure keys
-key = os.environ.get("GEMINI_API_KEY")
-if key:
-    os.environ["GOOGLE_API_KEY"] = key
 
-def parse_price(price_str):
-    if not price_str: return float('inf')
-    try:
-        clean = str(price_str).lower().replace(',', '').replace('₹', '').replace('rs', '').replace('rs.', '').strip()
-        match = re.search(r'\d+(\.\d+)?', clean)
-        return float(match.group()) if match else float('inf')
-    except:
-        return float('inf')
-
-async def perform_search(app_name, query, item_type="product"):
+class CommerceAgent:
     """
-    Executes search using NeuroOrchestrator (The 'Super-Agent')
+    Professional Commerce Agent using DroidRun Framework.
+    Follows the 'Brain' (Host) and 'Senses' (Portal) architecture.
     """
-    print(f"\n[Status] 🧠 NeuroOrchestrator activating for {app_name}...")
     
-    # Initialize Orchestrator
-    orchestrator = NeuroOrchestrator(api_key=os.environ["GOOGLE_API_KEY"])
-    
-    # High-level Goal for the Brain
-    goal = (
-        f"Open {app_name} and search for '{query}'. "
-        f"Find the top result for {item_type}. "
-        f"Read its price and rating from the screen. "
-        f"Return the data strictly as JSON: {{'title': '...', 'price': '...', 'rating': '...'}}"
-        f"If the app is not installed or fails to load, return status failed."
-    )
-    
-    result = await orchestrator.run_mission(goal)
-    
-    if isinstance(result, dict) and result.get('status') == 'success':
-        data = result.get('data', {})
-        # Normalize keys
-        return {
-            "platform": app_name,
-            "status": "success",
-            "items": [data], # Orchestrator returns best item usually
-            "best_item": {
-                "title": data.get('title', 'Unknown'),
-                "price": data.get('price', '0'),
-                "rating": data.get('rating', '0'),
-                "numeric_price": parse_price(data.get('price', '0'))
-            }
-        }
-    else:
-        return {
-            "platform": app_name,
-            "status": "failed",
-            "error": result.get('error', 'Unknown Error') if isinstance(result, dict) else str(result)
-        }
+    def __init__(self, provider="gemini", model="gemini-1.5-flash"):
+        self.provider = provider
+        self.model = model
+        self._ensure_api_keys()
 
-async def main_async():
-    parser = argparse.ArgumentParser(description="DroidRun Commerce Agent (NeuroOrchestrator)")
-    parser.add_argument("--task", choices=['shopping', 'food'], default='shopping', help="Type of task")
-    parser.add_argument("--query", required=True, help="Item to search for")
-    
+    def _ensure_api_keys(self):
+        if self.provider == "gemini" and not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+             # Fallback check
+             print("[Warn] GEMINI_API_KEY not found in env, checking GOOGLE_API_KEY")
+
+    def _parse_price(self, price_str):
+        """Robust price parsing utility."""
+        if not price_str: return float('inf')
+        try:
+            clean = str(price_str).lower().replace(',', '').replace('₹', '').replace('rs', '').replace('rs.', '').strip()
+            match = re.search(r'\d+(\.\d+)?', clean)
+            return float(match.group()) if match else float('inf')
+        except:
+            return float('inf')
+
+    async def execute_task(self, app_name: str, query: str, item_type: str) -> dict:
+        """
+        Spawns a DroidAgent to execute a specific commerce task.
+        Uses Vision capabilities for better UI understanding.
+        """
+        print(f"\n[CommerceAgent] Initializing Task for: {app_name}")
+        
+        # 1. Define Goal (Natural Language with Structural Constraints)
+        goal = (
+            f"Open the app '{app_name}'. "
+            f"Search for '{query}'. "
+            f"Visually identify the best search result for {item_type}. "
+            f"Extract the Title, Price, and Rating. "
+            f"Return a JSON object with keys: 'title', 'price', 'rating'. "
+            f"Ensure strict JSON format."
+        )
+
+        # 2. Configure Agent (Professional Pattern)
+        # Using Vision for robustness against custom UI (Flutter/React Native)
+        config = DroidrunConfig(
+            provider=self.provider, 
+            model=self.model
+        )
+
+        agent = DroidAgent(
+            goal=goal,
+            config=config,
+            use_vision=True,  # Enable Vision for "Senses"
+            temperature=0.   # Precision mode
+        )
+
+        # 3. Execute
+        start_data = {"platform": app_name, "status": "failed", "data": {}}
+        try:
+            print(f"[CommerceAgent] 🧠 Running Agent Logic...")
+            result = await agent.run()
+            
+            # 4. Parse Output
+            if result:
+                clean_json = str(result).strip()
+                # Markdown cleanup
+                if "```json" in clean_json:
+                    clean_json = clean_json.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean_json:
+                    clean_json = clean_json.split("```")[1].split("```")[0].strip()
+                
+                # Heuristic validation
+                if clean_json.startswith("{"):
+                    start_data["data"] = json.loads(clean_json)
+                    start_data["status"] = "success"
+                    # Add numeric price for comparison logic
+                    start_data["data"]["numeric_price"] = self._parse_price(start_data["data"].get("price"))
+                else:
+                     print(f"[Warn] Agent output was not JSON: {clean_json[:50]}...")
+            
+            return start_data
+
+        except Exception as e:
+            print(f"[Error] Task Execution Failed: {e}")
+            return start_data
+
+async def main():
+    parser = argparse.ArgumentParser(description="BestBuy-Agent: Commerce Automation (DroidRun)")
+    parser.add_argument("--task", choices=['shopping', 'food'], default='shopping')
+    parser.add_argument("--query", required=True)
     args = parser.parse_args()
-    
-    platforms = []
-    item_type = "product" # default
+
+    # Domain Configuration
     if args.task == "shopping":
         platforms = ["Amazon", "Flipkart"]
         item_type = "product"
-    elif args.task == "food":
+    else:
         platforms = ["Zomato", "Swiggy"]
         item_type = "food item"
-        
-    results = {}
+
+    # Initialize Controller
+    commerce_bot = CommerceAgent(provider="gemini", model="gemini-1.5-flash")
     
-    for plat in platforms:
-        res = await perform_search(plat, args.query, item_type)
-        results[plat.lower()] = res
-        
-    # Comparison Logic
+    results = {}
+
+    # Sequential Execution (Single Device limitation)
+    for platform in platforms:
+        res = await commerce_bot.execute_task(platform, args.query, item_type)
+        results[platform.lower()] = res
+        # Brief cooldown for app switching stability
+        await asyncio.sleep(2)
+
+    # Output (Stdout for Backend Integration)
+    print("\n--- Final Aggregated Results ---")
     print(json.dumps(results, indent=2))
 
-def main():
-    asyncio.run(main_async())
-
 if __name__ == "__main__":
-    main()
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(main())
