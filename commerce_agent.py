@@ -55,10 +55,17 @@ class CommerceAgent:
         goal = (
             f"Open the app '{app_name}'. "
             f"Search for '{query}'. "
-            f"Visually identify the best search result for {item_type}. "
-            f"Extract the Title, Price, and Rating. "
-            f"Return a JSON object with keys: 'title', 'price', 'rating'. "
-            f"Ensure strict JSON format."
+            f"Wait for the search results to load. "
+            f"Visually SCAN the search results. "
+            f"Identify multiple items matching '{query}'. "
+            f"COMPARE their prices and Select the CHEAPEST option. "
+            f"Extract the following details for the CHEAPEST item: "
+            f"1. Product Name (title) "
+            f"2. Price (numeric value) "
+            f"3. Rating "
+            f"4. Restaurant Name "
+            f"Return a strict JSON object with keys: 'title', 'price', 'rating', 'restaurant'. "
+            f"If no exact match is found, find the closest match. "
         )
 
         # 2. Configure Agent (Professional Pattern)
@@ -66,7 +73,7 @@ class CommerceAgent:
         # 2. Configure Agent (Professional Pattern)
         # Using load_llm to avoid DroidrunConfig error
         from droidrun.agent.utils.llm_picker import load_llm
-        from droidrun.config_manager import DroidrunConfig, AgentConfig, ManagerConfig, ExecutorConfig
+        from droidrun.config_manager import DroidrunConfig, AgentConfig, ManagerConfig, ExecutorConfig, TelemetryConfig
         
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         llm = load_llm(
@@ -86,7 +93,13 @@ class CommerceAgent:
             executor=executor_config
         )
         
-        config = DroidrunConfig(agent=agent_config)
+        # Disable telemetry to avoid "multiple values for distinct_id" error
+        telemetry_config = TelemetryConfig(enabled=False)
+        
+        config = DroidrunConfig(
+            agent=agent_config,
+            telemetry=telemetry_config
+        )
 
         agent = DroidAgent(
             goal=goal,
@@ -105,11 +118,19 @@ class CommerceAgent:
         try:
             print(f"[CommerceAgent] 🧠 Running Agent Logic...")
             result = await agent.run()
+            print(f"[DEBUG] Raw Agent Result type: {type(result)}")
+            print(f"[DEBUG] Raw Agent Result: {result}")
             
             # 4. Parse Output
             if result:
-                clean_json = str(result).strip()
+                # Handle DroidAgent Event objects
+                if hasattr(result, 'reason'):
+                     clean_json = str(result.reason).strip()
+                else:
+                     clean_json = str(result).strip()
                 
+                print(f"[DEBUG] Processing result string: {clean_json[:100]}...")
+
                 # XML tag cleanup (common with DroidRun Reasoning)
                 if "<request_accomplished" in clean_json:
                     try:
@@ -125,8 +146,18 @@ class CommerceAgent:
                 
                 # Heuristic validation
                 if clean_json.startswith("{"):
-                    start_data["data"] = json.loads(clean_json)
-                    start_data["status"] = "success"
+                    try:
+                         data = json.loads(clean_json)
+                         start_data["data"] = data
+                         start_data["status"] = "success"
+                         start_data["data"]["numeric_price"] = self._parse_price(data.get("price"))
+                         # Ensure restaurant key exists
+                         if "restaurant" not in start_data["data"]:
+                              start_data["data"]["restaurant"] = "Unknown"
+                    except json.JSONDecodeError:
+                         print(f"[Warn] JSON Decode Error: {clean_json}")
+                else:
+                     print(f"[Warn] Agent output was not JSON: {clean_json[:50]}...")
                     # Add numeric price for comparison logic
                     start_data["data"]["numeric_price"] = self._parse_price(start_data["data"].get("price"))
                 else:
