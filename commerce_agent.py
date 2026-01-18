@@ -63,16 +63,41 @@ class CommerceAgent:
 
         # 2. Configure Agent (Professional Pattern)
         # Using Vision for robustness against custom UI (Flutter/React Native)
-        config = DroidrunConfig(
-            provider=self.provider, 
-            model=self.model
+        # 2. Configure Agent (Professional Pattern)
+        # Using load_llm to avoid DroidrunConfig error
+        from droidrun.agent.utils.llm_picker import load_llm
+        from droidrun.config_manager import DroidrunConfig, AgentConfig, ManagerConfig, ExecutorConfig
+        
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        llm = load_llm(
+            provider_name="GoogleGenAI",
+            model=self.model,
+            api_key=api_key
         )
+
+        # Create properly typed config
+        # Enable vision for Manager (planning) and Executor (acting)
+        manager_config = ManagerConfig(vision=True)
+        executor_config = ExecutorConfig(vision=True)
+        
+        agent_config = AgentConfig(
+            reasoning=True,
+            manager=manager_config,
+            executor=executor_config
+        )
+        
+        config = DroidrunConfig(agent=agent_config)
 
         agent = DroidAgent(
             goal=goal,
-            config=config,
-            use_vision=True,  # Enable Vision for "Senses"
-            temperature=0.   # Precision mode
+            llms=llm,          # Correct argument name is 'llms'
+            config=config,     # Pass the structured config
+            # use_vision=True, # REMOVED: Managed via config
+            # reasoning=True,  # REMOVED: Managed via config
+            # temperature=0.0  # REMOVED: Not accepted by Workflow base class directly? 
+            # If temperature controls LLM, it should be in LLM object or config. 
+            # llm object already has temperature if set during load_llm, but load_llm doesn't seem to take temp.
+            # We trust defaults/LLM profile for now.
         )
 
         # 3. Execute
@@ -84,6 +109,14 @@ class CommerceAgent:
             # 4. Parse Output
             if result:
                 clean_json = str(result).strip()
+                
+                # XML tag cleanup (common with DroidRun Reasoning)
+                if "<request_accomplished" in clean_json:
+                    try:
+                        clean_json = clean_json.split(">")[1].split("</request_accomplished>")[0].strip()
+                    except IndexError:
+                        pass
+                
                 # Markdown cleanup
                 if "```json" in clean_json:
                     clean_json = clean_json.split("```json")[1].split("```")[0].strip()
@@ -98,6 +131,8 @@ class CommerceAgent:
                     start_data["data"]["numeric_price"] = self._parse_price(start_data["data"].get("price"))
                 else:
                      print(f"[Warn] Agent output was not JSON: {clean_json[:50]}...")
+            else:
+                 print("[Warn] Agent returned None result.")
             
             return start_data
 
@@ -120,7 +155,8 @@ async def main():
         item_type = "food item"
 
     # Initialize Controller
-    commerce_bot = CommerceAgent(provider="gemini", model="gemini-1.5-flash")
+    # Using 2.5 Flash as recommended by quotas
+    commerce_bot = CommerceAgent(provider="gemini", model="models/gemini-2.5-flash")
     
     results = {}
 
