@@ -103,14 +103,8 @@ class CommerceAgent:
 
         agent = DroidAgent(
             goal=goal,
-            llms=llm,          # Correct argument name is 'llms'
-            config=config,     # Pass the structured config
-            # use_vision=True, # REMOVED: Managed via config
-            # reasoning=True,  # REMOVED: Managed via config
-            # temperature=0.0  # REMOVED: Not accepted by Workflow base class directly? 
-            # If temperature controls LLM, it should be in LLM object or config. 
-            # llm object already has temperature if set during load_llm, but load_llm doesn't seem to take temp.
-            # We trust defaults/LLM profile for now.
+            llms=llm,
+            config=config,
         )
 
         # 3. Execute
