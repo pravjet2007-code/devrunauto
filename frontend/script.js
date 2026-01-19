@@ -305,29 +305,40 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         ws.onmessage = (event) => {
-            logStatus(`> ${event.data}`);
+            // New Server sends JSON, but might send strings in legacy cases
+            let data = event.data;
+            try {
+                // Try to parse JSON
+                const parsed = JSON.parse(data);
 
-            // Check for Task Completion
-            if (event.data.includes("✅ Task Complete")) {
-                try {
-                    const jsonStr = event.data.split("Result: ")[1];
-                    const result = JSON.parse(jsonStr);
-
-                    const resultPanel = document.getElementById('result-panel');
-                    const resultMsg = document.getElementById('result-message');
-
-                    if (resultPanel && resultMsg) {
-                        resultPanel.classList.remove('hidden');
-                        // Small timeout to allow display:block to apply before opacity transition
-                        setTimeout(() => resultPanel.classList.add('active'), 50);
-
-                        resultMsg.textContent = result.message || "Operation Successful";
-
-                        // GSAP Emphasis
-                        gsap.from(resultMsg, { scale: 1.5, color: "#4CAF50", duration: 0.5, ease: "back.out(1.7)" });
+                if (parsed.type === 'log') {
+                    logStatus(`> ${parsed.message}`);
+                }
+                else if (parsed.type === 'complete') {
+                    // Task Complete
+                    if (parsed.status === 'success') {
+                        showResultUI(parsed.result, "Operation Successful");
+                    } else {
+                        logStatus(`Task Failed: ${JSON.stringify(parsed.result)}`, 'error');
+                        if (parsed.result && parsed.result.error) {
+                            showResultUI(parsed.result, "Task Failed");
+                        }
                     }
-                } catch (e) {
-                    console.error("Error parsing result for UI", e);
+                }
+                else if (parsed.type === 'start') {
+                    logStatus(`> Task Started: ${parsed.persona} (ID: ${parsed.task_id})`);
+                }
+            } catch (e) {
+                // Fallback for raw strings (if any)
+                logStatus(`> ${data}`);
+
+                // Legacy Check for Task Completion (if server reverted)
+                if (typeof data === 'string' && data.includes("✅ Task Complete")) {
+                    try {
+                        const jsonStr = data.split("Result: ")[1];
+                        const result = JSON.parse(jsonStr);
+                        showResultUI(result);
+                    } catch (err) { console.error(err); }
                 }
             }
         };
@@ -341,6 +352,22 @@ document.addEventListener('DOMContentLoaded', () => {
             logStatus('Uplink Disconnected. Retrying in 5s...');
             setTimeout(connectWebSocket, 5000);
         };
+    }
+
+    function showResultUI(result, defaultMsg = "Operation Successful") {
+        const resultPanel = document.getElementById('result-panel');
+        const resultMsg = document.getElementById('result-message');
+
+        if (resultPanel && resultMsg) {
+            resultPanel.classList.remove('hidden');
+            // Small timeout to allow display:block to apply before opacity transition
+            setTimeout(() => resultPanel.classList.add('active'), 50);
+
+            resultMsg.textContent = result.message || defaultMsg;
+
+            // GSAP Emphasis
+            gsap.from(resultMsg, { scale: 1.5, color: "#4CAF50", duration: 0.5, ease: "back.out(1.7)" });
+        }
     }
 
     // Helper: Log Status

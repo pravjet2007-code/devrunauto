@@ -1,0 +1,295 @@
+document.addEventListener('DOMContentLoaded', () => {
+    // DOM Elements
+    const tasksGrid = document.getElementById('tasks-grid');
+    const modal = document.getElementById('task-modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalId = document.getElementById('modal-id');
+    const modalStatus = document.getElementById('modal-status');
+    const consoleOutput = document.getElementById('console-output');
+    const resultArea = document.getElementById('result-area');
+    const resultJson = document.getElementById('result-json');
+    const closeModalBtn = document.getElementById('close-modal');
+    const connectionStatus = document.getElementById('connection-status');
+    const statusDot = document.querySelector('.status-dot');
+
+    // State
+    let activeTaskId = null;
+    let tasks = {}; // { taskId: taskData }
+
+    // Init Logic
+    fetchTasks();
+    connectWebSocket();
+
+    // Event Listeners
+    closeModalBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+
+    // --- Data Fetching ---
+    async function fetchTasks() {
+        try {
+            const response = await fetch('http://localhost:8000/tasks');
+            const data = await response.json();
+
+            // Clear current (simple re-render for now)
+            tasksGrid.innerHTML = '';
+            tasks = {};
+
+            if (data.length === 0) {
+                renderEmptyState();
+            } else {
+                data.forEach(task => {
+                    tasks[task.id] = task;
+                    createTaskCard(task);
+                });
+            }
+            feather.replace();
+        } catch (error) {
+            console.error("Failed to fetch tasks:", error);
+        }
+    }
+
+    function renderEmptyState() {
+        tasksGrid.innerHTML = `
+            <div class="empty-state">
+                <i data-feather="activity" class="empty-icon"></i>
+                <p>No active missions. Deploy an agent to see data here.</p>
+            </div>
+        `;
+    }
+
+    // --- UI Rendering ---
+    function createTaskCard(task) {
+        // Remove empty state if present
+        if (tasksGrid.querySelector('.empty-state')) {
+            tasksGrid.innerHTML = '';
+        }
+
+        const card = document.createElement('div');
+        card.id = `card-${task.id}`;
+        card.className = `task-card ${task.status}`;
+        card.onclick = () => openTaskModal(task.id);
+
+        const icon = getPersonaIcon(task.persona);
+
+        card.innerHTML = `
+            <div class="card-header">
+                <div class="persona-badge">
+                    ${icon}
+                    <span>${capitalize(task.persona)}</span>
+                </div>
+                <span class="status-badge ${task.status}">${task.status.toUpperCase()}</span>
+            </div>
+            <div class="card-body">
+                <p class="task-info">${getTaskSummary(task)}</p>
+                <div class="task-footer">
+                    <span class="timestamp">${formatTime(task.created_at)}</span>
+                    <span class="arrow-icon"><i data-feather="chevron-right"></i></span>
+                </div>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar"></div>
+            </div>
+        `;
+
+        tasksGrid.prepend(card); // Newest first
+    }
+
+    function updateTaskCard(taskId, status, result = null) {
+        const card = document.getElementById(`card-${taskId}`);
+        if (!card) return; // Should fetch if missing
+
+        card.className = `task-card ${status}`;
+        const badge = card.querySelector('.status-badge');
+        badge.className = `status-badge ${status}`;
+        badge.textContent = status.toUpperCase();
+
+        if (tasks[taskId]) {
+            tasks[taskId].status = status;
+            tasks[taskId].result = result;
+        }
+
+        // Update modal if open
+        if (activeTaskId === taskId) {
+            modalStatus.textContent = status.toUpperCase();
+            modalStatus.className = `badge ${status}`;
+            if (status === 'success' || status === 'failed') {
+                showResult(result);
+            }
+        }
+    }
+
+    // --- Modal Logic ---
+    function openTaskModal(taskId) {
+        const task = tasks[taskId];
+        if (!task) return;
+
+        activeTaskId = taskId;
+        modalTitle.textContent = `${capitalize(task.persona)} Operation`;
+        modalId.textContent = `ID: ${taskId.split('-')[0]}...`; // Short ID
+
+        modalStatus.textContent = task.status.toUpperCase();
+        modalStatus.className = `badge ${task.status}`;
+
+        // Populate logs
+        consoleOutput.innerHTML = '';
+        if (task.logs && task.logs.length > 0) {
+            task.logs.forEach(log => appendLog(log, false)); // Don't scroll yet
+        } else {
+            consoleOutput.innerHTML = '<div class="log-line system">> Waiting for Uplink...</div>';
+        }
+
+        // Show result if done
+        if (task.status === 'success' || task.status === 'failed') {
+            showResult(task.result);
+        } else {
+            resultArea.classList.add('hidden');
+        }
+
+        modal.classList.remove('hidden');
+        setTimeout(() => modal.classList.add('active'), 10);
+
+        // Scroll to bottom
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    }
+
+    function closeModal() {
+        modal.classList.remove('active');
+        setTimeout(() => {
+            modal.classList.add('hidden');
+            activeTaskId = null;
+        }, 300);
+    }
+
+    function appendLog(message, autoScroll = true) {
+        // Strip timestamp if double
+        // Message usually comes as "[HH:MM:SS] msg" from history, or just "msg" via WS
+        // Our server append_task_log adds timestamp, but WS broadcast sends raw message in one field?
+        // Let's rely on server format
+
+        const line = document.createElement('div');
+        line.className = 'log-line';
+
+        // Simple highlighting
+        if (message.includes('Error') || message.includes('failed') || message.includes('❌')) {
+            line.classList.add('error');
+        } else if (message.includes('Success') || message.includes('✅')) {
+            line.classList.add('success');
+        }
+
+        line.textContent = message;
+        consoleOutput.appendChild(line);
+
+        if (autoScroll) {
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+    }
+
+    function showResult(result) {
+        resultArea.classList.remove('hidden');
+        resultJson.textContent = JSON.stringify(result, null, 2);
+    }
+
+    // --- WebSocket ---
+    function connectWebSocket() {
+        // Use relative path or hardcoded local
+        const ws = new WebSocket('ws://localhost:8000/ws');
+
+        ws.onopen = () => {
+            connectionStatus.textContent = 'Live Uplink';
+            statusDot.classList.add('pulse');
+            statusDot.style.backgroundColor = '#00ff00';
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleWsMessage(data);
+            } catch (e) {
+                // Ignore raw strings if any
+                console.log("Ignored non-JSON WS message:", event.data);
+            }
+        };
+
+        ws.onclose = () => {
+            connectionStatus.textContent = 'Disconnected';
+            statusDot.classList.remove('pulse');
+            statusDot.style.backgroundColor = '#ff0000';
+            setTimeout(connectWebSocket, 5000);
+        };
+    }
+
+    function handleWsMessage(payload) {
+        const { type, task_id, message, status, result, persona } = payload;
+
+        // Ensure task exists in local state
+        if (type === 'start') {
+            const newTask = {
+                id: task_id,
+                persona: persona,
+                status: 'running',
+                created_at: new Date().toISOString(),
+                logs: [],
+                result: null,
+                payload: {} // Simplify
+            };
+            tasks[task_id] = newTask;
+            createTaskCard(newTask);
+            feather.replace();
+        }
+
+        // Ensure we have the record locally before updating
+        if (!tasks[task_id] && type !== 'start') {
+            // Task started before we loaded dashboard? Fetch all again or create placeholder
+            fetchTasks();
+            return;
+        }
+
+        if (type === 'log') {
+            // Add raw message to local state
+            // Timestamp it locally for display if needed, but simple append is fine
+            tasks[task_id].logs.push(message);
+
+            // If viewing this task, update console
+            if (activeTaskId === task_id) {
+                appendLog(message);
+            }
+        } else if (type === 'complete') {
+            updateTaskCard(task_id, status, result);
+        }
+    }
+
+    // --- Helpers ---
+    function capitalize(str) {
+        return str ? str.charAt(0).toUpperCase() + str.slice(1) : '';
+    }
+
+    function formatTime(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function getPersonaIcon(persona) {
+        const icons = {
+            shopper: '<i data-feather="shopping-cart"></i>',
+            rider: '<i data-feather="map"></i>',
+            patient: '<i data-feather="plus-circle"></i>',
+            coordinator: '<i data-feather="calendar"></i>',
+            foodie: '<i data-feather="coffee"></i>'
+        };
+        return icons[persona] || '<i data-feather="cpu"></i>';
+    }
+
+    function getTaskSummary(task) {
+        // Safe extraction of intent
+        const p = task.payload || {};
+        if (task.persona === 'shopper') return `Finding ${p.product || 'items'}`;
+        if (task.persona === 'rider') return `Ride to ${p.drop || 'destination'}`;
+        if (task.persona === 'patient') return `Meds: ${p.medicine || 'Prescription'}`;
+        if (task.persona === 'coordinator') return `Event: ${p.event_name || 'Party'}`;
+        if (task.persona === 'foodie') return `Order: ${p.food_item || 'Food'}`;
+        return 'Execution in progress...';
+    }
+});

@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
-from typing import Dict, Any
+import uuid
+from datetime import datetime
+from typing import Dict, Any, List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +30,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- InMemory Task Store ---
+# Structure: { task_id: { "id": str, "persona": str, "status": str, "logs": list, "result": Any, "timestamp": str } }
+task_history: List[Dict[str, Any]] = []
+
+def add_task_record(task_id: str, persona: str, payload: Any):
+    record = {
+        "id": task_id,
+        "persona": persona,
+        "status": "running",
+        "created_at": datetime.now().isoformat(),
+        "logs": [],
+        "result": None,
+        "payload": payload.dict()
+    }
+    task_history.insert(0, record) # Newest first
+    return record
+
+def update_task_status(task_id: str, status: str, result: Any = None):
+    for task in task_history:
+        if task["id"] == task_id:
+            task["status"] = status
+            if result:
+                task["result"] = result
+            break
+
+def append_task_log(task_id: str, message: str):
+    for task in task_history:
+        if task["id"] == task_id:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            log_entry = f"[{timestamp}] {message}"
+            task["logs"].append(log_entry)
+            break
+
 # WebSocket Manager
 class ConnectionManager:
     def __init__(self):
@@ -41,6 +76,15 @@ class ConnectionManager:
         self.active_connections.remove(websocket)
 
     async def broadcast(self, message: str):
+        # Legacy support if needed, but we prefer structured
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except:
+                pass
+
+    async def broadcast_json(self, data: Dict[str, Any]):
+        message = json.dumps(data, default=str)
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)
@@ -67,6 +111,17 @@ class TaskPayload(BaseModel):
 async def root():
     return {"status": "DroidRun Server Running"}
 
+@app.get("/tasks")
+async def get_tasks():
+    return task_history
+
+@app.get("/tasks/{task_id}")
+async def get_task_details(task_id: str):
+    for task in task_history:
+        if task["id"] == task_id:
+            return task
+    return {"error": "Task not found"}
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
@@ -77,61 +132,67 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
+async def log_and_broadcast(task_id: str, message: str):
+    """Save log to history and broadcast to WS"""
+    append_task_log(task_id, message)
+    await manager.broadcast_json({
+        "type": "log",
+        "task_id": task_id,
+        "message": message
+    })
+
 async def run_agent_task(payload: TaskPayload):
     """
     Executes the agent logic based on persona.
     Broadcasts logs to WebSocket.
     """
-    await manager.broadcast(f"🚀 Starting Executor for Persona: {payload.persona}")
+    task_id = str(uuid.uuid4())
+    add_task_record(task_id, payload.persona, payload)
+    
+    # Notify start
+    await manager.broadcast_json({
+        "type": "start",
+        "task_id": task_id,
+        "persona": payload.persona,
+        "timestamp": datetime.now().isoformat()
+    })
+
+    await log_and_broadcast(task_id, f"🚀 Starting Executor for Persona: {payload.persona}")
     
     result = None
+    status = "failed"
     
     try:
         if payload.persona == "shopper":
             agent = CommerceAgent(model="models/gemini-2.5-flash")
-            await manager.broadcast(f"Searching for {payload.product} on Amazon/Flipkart...")
-            # Note: Using default 'search' action for now. Could expose 'order' later.
-            result = await agent.execute_task("Amazon", payload.product, "product") # Just Amazon for speed in demo or iter over list
-            # To actually run comparison:
-            # We recreate the main loop logic here roughly or allow agent to return multiple
-            # For this simple server version, let's just check Amazon as a proxy for 'Best Deal' logic
-            # OR ideally we run the full comparison. 
-            # Let's run full comparison for robustness if possible, but keep it simple.
-            # Let's assume CommerceAgent main() did the comparison. 
-            # We will run Amazon first.
+            await log_and_broadcast(task_id, f"Searching for {payload.product} on Amazon/Flipkart...")
+            
+            result = await agent.execute_task("Amazon", payload.product, "product") 
+            
             if result['status'] == 'failed':
-                 await manager.broadcast("Amazon failed, trying Flipkart...")
+                 await log_and_broadcast(task_id, "Amazon failed, trying Flipkart...")
                  result = await agent.execute_task("Flipkart", payload.product, "product")
                  
         elif payload.persona == "rider":
             agent = RideComparisonAgent(model="models/gemini-2.5-flash")
-            await manager.broadcast(f"Comparing rides from {payload.pickup} to {payload.drop}...")
-            # Run comparison
+            await log_and_broadcast(task_id, f"Comparing rides from {payload.pickup} to {payload.drop}...")
             full_res = await agent.compare_rides(payload.pickup, payload.drop)
             result = full_res.get('best_deal', {"status": "failed"})
             
         elif payload.persona == "patient":
             agent = PharmacyAgent(model="models/gemini-2.5-flash")
-            await manager.broadcast(f"Searching for medicine: {payload.medicine}...")
+            await log_and_broadcast(task_id, f"Searching for medicine: {payload.medicine}...")
             full_res = await agent.compare_prices(payload.medicine, "patient")
             result = full_res.get('best_option', {"status": "failed"})
 
         elif payload.persona == "foodie":
              agent = CommerceAgent(model="models/gemini-2.5-flash")
-             await manager.broadcast(f"🍔 Foodie Mode Activated: {payload.action.upper()} '{payload.food_item}'")
+             await log_and_broadcast(task_id, f"🍔 Foodie Mode Activated: {payload.action.upper()} '{payload.food_item}'")
              
              if payload.action == 'order':
-                 # Autonomous Ordering
+                 await log_and_broadcast(task_id, "Initiating autonomous order sequence...")
                  order_res = await agent.auto_order_cheapest(payload.food_item)
-                 # Extract details for message
-                 # order_res looks like { 'zomato':..., 'swiggy':..., 'order_status':... }
-                 # We want to identify the winner to show nicely
-                 
-                 msg = "Order Completed." 
-                 # Try to extract details from logs/result structure if possible
-                 # Currently auto_order_cheapest prints to stdout mostly, returns full dict
-                 # Let's try to parse the 'order_status' key
-                 
+
                  final_status = order_res.get('order_status', {}).get('status', 'unknown')
                  if final_status == 'success':
                      msg = "✅ Order Placed Successfully!"
@@ -145,19 +206,18 @@ async def run_agent_task(payload: TaskPayload):
                  }
 
              else:
-                 # Search Only (Zomato + Swiggy)
+                 await log_and_broadcast(task_id, "Searching Zomato and Swiggy...")
                  results = {}
                  platforms = ["Zomato", "Swiggy"]
                  for p in platforms:
+                      await log_and_broadcast(task_id, f"Checking {p}...")
                       res = await agent.execute_task(p, payload.food_item, "food item", action="search")
                       results[p.lower()] = res
                       await asyncio.sleep(1)
                  
-                 # Combine results for frontend display
                  z_price = results.get('zomato', {}).get('data', {}).get('price', 'N/A')
                  s_price = results.get('swiggy', {}).get('data', {}).get('price', 'N/A')
                  
-                 # Determine cheaper
                  zp = float(results.get('zomato', {}).get('data', {}).get('numeric_price', float('inf')))
                  sp = float(results.get('swiggy', {}).get('data', {}).get('numeric_price', float('inf')))
                  
@@ -166,6 +226,7 @@ async def run_agent_task(payload: TaskPayload):
                  elif sp < zp: winner = "Swiggy"
                  elif zp == sp and zp != float('inf'): winner = "Tie"
 
+                 await log_and_broadcast(task_id, f"Prices found: Zomato ({z_price}), Swiggy ({s_price})")
                  result = {
                      "status": "success", 
                      "message": f"Best Deal Found: {winner}. (Zomato: {z_price}, Swiggy: {s_price})",
@@ -174,23 +235,33 @@ async def run_agent_task(payload: TaskPayload):
 
         elif payload.persona == "coordinator":
             agent = EventCoordinatorAgent(model="models/gemini-2.5-flash")
-            await manager.broadcast(f"🎪 Orchestrating Event: {payload.event_name}")
-            # Mocking logistics reqs for now or deriving from guest list
+            await log_and_broadcast(task_id, f"🎪 Orchestrating Event: {payload.event_name}")
             logistics = [] 
-            # In a real app, guest_list would have 'needs_cab' flag.
-            
             await agent.orchestrate_event(payload.event_name, payload.guest_list, logistics)
             result = {"status": "success", "message": "Event Orchestration Complete"}
 
-        # Broadcast Final Result
+        # Determine final status
         if result:
-            await manager.broadcast(f"✅ Task Complete. Result: {json.dumps(result, default=str)}")
+            status = "success"
+            await log_and_broadcast(task_id, f"✅ Task Complete.")
         else:
-            await manager.broadcast("❌ Task Failed or Returned No Data.")
+            status = "failed"
+            await log_and_broadcast(task_id, "❌ Task Failed or Returned No Data.")
 
     except Exception as e:
         logger.error(f"Task Error: {e}")
-        await manager.broadcast(f"🔥 Error: {str(e)}")
+        status = "failed"
+        result = {"error": str(e)}
+        await log_and_broadcast(task_id, f"🔥 Error: {str(e)}")
+
+    # Update History and Broadcast Completion
+    update_task_status(task_id, status, result)
+    await manager.broadcast_json({
+        "type": "complete",
+        "task_id": task_id,
+        "status": status,
+        "result": result
+    })
 
 @app.post("/task")
 async def create_task(payload: TaskPayload):
