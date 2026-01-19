@@ -188,7 +188,60 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function showResult(result) {
         resultArea.classList.remove('hidden');
-        resultJson.textContent = JSON.stringify(result, null, 2);
+
+        // Custom Result View based on Available Data
+        if (result.cab_details || result.driver_details) {
+            // Rider Booking Success View
+            resultJson.innerHTML = ''; // Clear RAW JSON
+
+            const card = document.createElement('div');
+            card.className = 'info-card';
+            card.innerHTML = `
+                <div class="info-header">
+                    <i data-feather="check-circle" style="color: #4CAF50;"></i>
+                    <h3>Ride Confirmed</h3>
+                </div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="label">Vehicle</span>
+                        <span class="value">${result.cab_details || 'Cab'}</span>
+                    </div>
+                     <div class="info-item">
+                        <span class="label">Driver</span>
+                        <span class="value">${result.driver_details || 'Unknown'}</span>
+                    </div>
+                     <div class="info-item">
+                        <span class="label">Fare</span>
+                        <span class="value">${result.price || 'N/A'}</span>
+                    </div>
+                     <div class="info-item">
+                        <span class="label">ETA</span>
+                        <span class="value">${result.eta || 'Soon'}</span>
+                    </div>
+                </div>
+            `;
+
+            // If screenshot path provided (future feature), add img here
+            // if(result.screenshot_path) ...
+
+            resultArea.appendChild(card);
+            feather.replace();
+
+            // Still append raw JSON hidden or small for debug? 
+            // Let's just append it below details
+            const rawDetails = document.createElement('details');
+            rawDetails.style.marginTop = '1rem';
+            rawDetails.style.color = '#777';
+            rawDetails.innerHTML = `<summary>Raw Data</summary><pre>${JSON.stringify(result, null, 2)}</pre>`;
+            resultArea.appendChild(rawDetails);
+
+        } else if (result.details && result.details.zomato) {
+            // Foodie Search View (Example of other custom view)
+            resultJson.textContent = JSON.stringify(result, null, 2);
+        } else {
+            // Default Raw View
+            resultJson.textContent = JSON.stringify(result, null, 2);
+        }
     }
 
     // --- WebSocket ---

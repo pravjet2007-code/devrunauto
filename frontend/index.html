@@ -86,6 +86,30 @@
                             <label for="drop-location" class="input-label">Destination</label>
                             <input type="text" id="drop-location" class="styled-input" placeholder="Drop Information">
                         </div>
+
+                        <!-- Preferences -->
+                        <div class="input-group" style="margin-top: 1.5rem;">
+                            <label class="input-label" style="margin-bottom: 0.5rem;">Preference</label>
+                            <div class="pill-group" id="rider-preferences">
+                                <div class="pill-option active" data-value="cab">Cab</div>
+                                <div class="pill-option" data-value="auto">Auto</div>
+                                <div class="pill-option" data-value="sedan">Sedan</div>
+                            </div>
+                            <input type="hidden" id="rider-preference-value" value="cab">
+                        </div>
+
+                        <!-- Action Toggle -->
+                        <div class="input-group"
+                            style="display: flex; align-items: center; justify-content: space-between; margin-top: 1.5rem;">
+                            <label class="input-label" style="margin-bottom: 0;">Action</label>
+                            <div class="toggle-container">
+                                <span class="toggle-label" id="rider-toggle-text">Book Ride</span>
+                                <label class="switch">
+                                    <input type="checkbox" id="rider-action-toggle" checked>
+                                    <span class="slider round"></span>
+                                </label>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Patient Form -->

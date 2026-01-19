@@ -512,7 +512,33 @@ input:checked+.slider:before {
     display: none;
 }
 
-/* --- Dashboard Styles --- */
+/* Pill Group (Preferences) */
+.pill-group {
+    display: flex;
+    gap: 10px;
+}
+
+.pill-option {
+    padding: 0.5rem 1.2rem;
+    border: 1px solid #ccc;
+    border-radius: 50px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.3s;
+    color: #555;
+}
+
+.pill-option:hover {
+    border-color: #000;
+}
+
+.pill-option.active {
+    background: #000;
+    color: #fff;
+    border-color: #000;
+}
+
+/* Dashboard styles... */
 .dashboard-body {
     background-color: #f8f9fa;
     display: block;
@@ -917,4 +943,54 @@ input:checked+.slider:before {
     height: 48px;
     margin-bottom: 1rem;
     opacity: 0.5;
+}
+
+/* Dashboard Styles - Info Card */
+.info-card {
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-top: 1rem;
+    color: #fff;
+}
+
+.info-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid #333;
+    padding-bottom: 1rem;
+}
+
+.info-header h3 {
+    margin: 0;
+    font-size: 1.2rem;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+.info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.info-item .label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    color: #777;
+    letter-spacing: 0.05em;
+}
+
+.info-item .value {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: #fff;
+    font-family: 'Space Grotesk', sans-serif;
 }

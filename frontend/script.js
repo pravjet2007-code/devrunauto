@@ -238,6 +238,36 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Rider Preferences Logic
+    const riderPills = document.querySelectorAll('#rider-preferences .pill-option');
+    const riderPrefInput = document.getElementById('rider-preference-value');
+    if (riderPills) {
+        riderPills.forEach(pill => {
+            pill.addEventListener('click', () => {
+                // Remove active from all
+                riderPills.forEach(p => p.classList.remove('active'));
+                // Add to clicked
+                pill.classList.add('active');
+                riderPrefInput.value = pill.dataset.value;
+            });
+        });
+    }
+
+    // Rider Toggle Listener
+    const riderToggle = document.getElementById('rider-action-toggle');
+    const riderToggleText = document.getElementById('rider-toggle-text');
+    if (riderToggle) {
+        riderToggle.addEventListener('change', () => {
+            if (riderToggle.checked) {
+                riderToggleText.textContent = "Book Ride";
+                gsap.to(riderToggleText, { color: "#000", fontWeight: "bold", duration: 0.3 });
+            } else {
+                riderToggleText.textContent = "Compare Rides";
+                gsap.to(riderToggleText, { color: "#555", fontWeight: "normal", duration: 0.3 });
+            }
+        });
+    }
+
     // API & WebSocket Interaction
     findDealBtn.addEventListener('click', async () => {
         const persona = hiddenInput.value;
@@ -258,6 +288,16 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (persona === 'rider') {
             payload.pickup = document.getElementById('pickup-location').value;
             payload.drop = document.getElementById('drop-location').value;
+
+            // New Fields
+            if (document.getElementById('rider-preference-value')) {
+                payload.preference = document.getElementById('rider-preference-value').value;
+            }
+            if (document.getElementById('rider-action-toggle')) {
+                const isBook = document.getElementById('rider-action-toggle').checked;
+                payload.action = isBook ? 'book' : 'compare';
+            }
+
         } else if (persona === 'patient') {
             payload.medicine = document.getElementById('medicine-name').value;
         } else if (persona === 'coordinator') {

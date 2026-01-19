@@ -44,18 +44,23 @@ class RideComparisonAgent:
         except:
             return float('inf')
 
-    async def execute_task(self, app_name: str, pickup: str, drop: str, action: str = "compare") -> dict:
+    async def execute_task(self, app_name: str, pickup: str, drop: str, preference: str = "cab", action: str = "compare") -> dict:
         """
         Executes a ride check task on a specific app.
         Action: 'compare' (view prices) or 'book' (book cheapest ride via Cash).
+        Preference: 'cab', 'auto', 'sedan'
         """
-        print(f"\n[RideAgent] Initializing Task for: {app_name} (Action: {action})")
+        print(f"\n[RideAgent] Initializing Task for: {app_name} (Action: {action}, Pref: {preference})")
         
         # Define Goal with specific instructions for each app and permission handling
-        if app_name.lower() == "uber":
-            ride_types = "Uber Go and Uber Moto"
+        # Map preference to specific ride types
+        ride_keywords = "Uber Go, Premier" # Default
+        if preference == "auto":
+            ride_keywords = "Uber Auto" if app_name == "Uber" else "Ola Auto"
+        elif preference == "sedan":
+            ride_keywords = "Uber Premier" if app_name == "Uber" else "Ola Prime Sedan"
         else:
-            ride_types = "Ola Mini, Ola Auto, or Bike"
+             ride_keywords = "Uber Go, Uber Moto" if app_name == "Uber" else "Ola Mini, Ola Bike"
 
         if action == "book":
             goal = (
@@ -65,11 +70,13 @@ class RideComparisonAgent:
                 f"Enter pickup location: '{pickup}'. "
                 f"Enter destination: '{drop}'. "
                 f"Wait for ride options. "
-                f"Select the CHEAPEST available ride (e.g., Moto or Mini). "
+                f"Select the CHEAPEST available ride matching preference '{preference}' (Look for: {ride_keywords}). "
                 f"Click 'Book' or 'Confirm'. "
                 f"Change Payment Method to 'Cash' if not already selected. "
                 f"Click 'Confirm Booking' or 'Request Ride'. "
-                f"Return a strict JSON object with keys: 'status' (success/failed), 'driver_details' (if visible), 'eta'. "
+                f"Wait for the 'Driver Found' screen. "
+                f"Extract Driver Name, Vehicle Number, and OTP if visible. "
+                f"Return a strict JSON with keys: 'status', 'driver_details', 'cab_details', 'price', 'eta'. "
             )
         else:
             goal = (
@@ -79,7 +86,7 @@ class RideComparisonAgent:
                 f"Enter pickup location: '{pickup}'. "
                 f"Enter destination: '{drop}'. "
                 f"Wait for the ride options to load. "
-                f"Visually SCAN the ride options for {ride_types}. "
+                f"Visually SCAN for rides matching preference '{preference}' (Look for: {ride_keywords}). "
                 f"Extract the ride type, price, and ETA. "
                 f"Return a strict JSON object with keys: 'app', 'ride_type', 'price', 'eta'. "
                 f"Ensure strict JSON format."
@@ -170,7 +177,7 @@ class RideComparisonAgent:
         results = {}
 
         for app in apps:
-            res = await self.execute_task(app, pickup, drop, preference)
+            res = await self.execute_task(app, pickup, drop, preference, action="compare")
             results[app] = res
             # Cooldown to allow app switching/closing
             await asyncio.sleep(3)
@@ -200,26 +207,26 @@ class RideComparisonAgent:
         
         return results
 
-    async def book_cheapest_ride(self, pickup, drop):
+    async def book_cheapest_ride(self, pickup, drop, preference="cab"):
         """
         High-level method to Find Cheapest -> Book It.
         """
         print(f"\n[RideAgent] 🤖 Autonomous Booking Sequence Initiated...")
         
         # 1. Compare
-        results = await self.compare_rides(pickup, drop)
+        results = await self.compare_rides(pickup, drop, preference)
         best_deal = results.get("best_deal")
         
         if not best_deal:
             print("[Error] No valid rides found to book.")
-            return None
+            return {"status": "failed", "message": "No rides found"}
         
         target_app = best_deal['app']
         price = best_deal['data'].get('price')
         print(f"[RideAgent] 🏆 Best Deal identified: {target_app} @ {price}. Proceeding to BOOK...")
         
         # 2. Book
-        booking_result = await self.execute_task(target_app, pickup, drop, action="book")
+        booking_result = await self.execute_task(target_app, pickup, drop, preference, action="book")
         
         print(f"\n[RideAgent] Booking Status for {target_app}: {booking_result.get('status')}")
         if booking_result.get('status') == 'success':
@@ -241,7 +248,7 @@ async def main():
     agent = RideComparisonAgent(model="models/gemini-2.5-flash")
     
     if args.action == "book":
-        await agent.book_cheapest_ride(args.pickup, args.drop)
+        await agent.book_cheapest_ride(args.pickup, args.drop, args.preference)
     else:
         await agent.compare_rides(args.pickup, args.drop, args.preference)
 

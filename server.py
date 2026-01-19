@@ -97,8 +97,11 @@ manager = ConnectionManager()
 class TaskPayload(BaseModel):
     persona: str
     product: str = None
+    # For Rider
     pickup: str = None
     drop: str = None
+    preference: str = "cab" # auto, cab, sedan
+    
     medicine: str = None
     # For Foodie
     food_item: str = None
@@ -175,9 +178,64 @@ async def run_agent_task(payload: TaskPayload):
                  
         elif payload.persona == "rider":
             agent = RideComparisonAgent(model="models/gemini-2.5-flash")
-            await log_and_broadcast(task_id, f"Comparing rides from {payload.pickup} to {payload.drop}...")
-            full_res = await agent.compare_rides(payload.pickup, payload.drop)
-            result = full_res.get('best_deal', {"status": "failed"})
+            pref_msg = f" ({payload.preference.upper()})" if payload.preference else ""
+            
+            await log_and_broadcast(task_id, f"Vehicle Preference: {payload.preference or 'Any'}")
+            
+            if payload.action == 'book':
+                await log_and_broadcast(task_id, f"Initiating Autonomous Booking Sequence to {payload.drop}...")
+                
+                # Use book_cheapest_ride which handles logic internally
+                # Note: We need to ensure book_cheapest_ride respects preference if possible, 
+                # but currently it just compares all. Let's assume we update agent to respect it or just run generic.
+                # Ideally pass preference to book_cheapest_ride.
+                
+                # NOTE: The agent's book_cheapest_ride signature is (pickup, drop).
+                # We might need to update agent later. For now, calling as is.
+                # Actually, strictly speaking we should pass preference to compare_rides called inside it.
+                # Let's pass it if we can, or just call execute_task directly if we knew the app.
+                # Best approach: Call agent.book_cheapest_ride(pickup, drop, preference) -> Update Agent next.
+                
+                booking_res = await agent.book_cheapest_ride(payload.pickup, payload.drop, payload.preference)
+                
+                if booking_res and booking_res.get('status') == 'success':
+                     driver = booking_res['data'].get('driver_details', 'Unknown')
+                     car = booking_res['data'].get('cab_details', 'Vehicle')
+                     price = booking_res['data'].get('price', 'N/A')
+                     eta = booking_res['data'].get('eta', 'N/A')
+                     
+                     msg = f"✅ Ride Booked! {car} ({driver}) arriving in {eta}. Fare: {price}"
+                     status = "success"
+                     result = booking_res
+                else:
+                     msg = "❌ Booking Failed. Could not find ride or confirm."
+                     status = "failed"
+                     result = booking_res
+                
+                await log_and_broadcast(task_id, msg)
+
+            else:
+                # Compare Only
+                await log_and_broadcast(task_id, f"Comparing rides from {payload.pickup} to {payload.drop}...")
+                full_res = await agent.compare_rides(payload.pickup, payload.drop, payload.preference)
+                
+                best = full_res.get('best_deal')
+                if best:
+                    price = best['data'].get('price')
+                    app_name = best['app']
+                    msg = f"Best Option: {app_name} @ {price}"
+                    status = "success"
+                    result = {
+                        "status": "success",
+                        "message": msg,
+                        "details": full_res
+                    }
+                else:
+                    msg = "No rides found."
+                    status = "failed"
+                    result = {"status": "failed", "message": msg}
+                
+                await log_and_broadcast(task_id, msg)
             
         elif payload.persona == "patient":
             agent = PharmacyAgent(model="models/gemini-2.5-flash")
